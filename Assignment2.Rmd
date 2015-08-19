@@ -1,0 +1,442 @@
+---
+title: "Solutions for Exercises 2"
+author: "Vijayakumar Ganapathy"
+date: "August 18, 2015"
+output: word_document
+---
+
+#**Question 1: Flights at ABIA**
+
+**Objective:** To create a figure, or set of related figures, that tell an interesting story about flights into and out of Austin.  
+
+```{r}
+# Reading the data
+abia <- read.csv("ABIA.csv", header = TRUE)
+
+# Extracting the useful columns
+abia <- abia[,c("Month","DayofMonth","DayOfWeek","DepTime","ArrTime","ArrDelay","DepDelay","Origin","Dest","Cancelled","CancellationCode")]
+
+# Manipulating the data and creating derived columns
+abia$arr_dep[abia$Origin=="AUS"]="Departure"
+abia$arr_dep[abia$Dest=="AUS"]="Arrival"
+abia$delay[abia$Origin=="AUS"]=abia$DepDelay[abia$Origin=="AUS"]
+abia$delay[abia$Dest=="AUS"]=abia$ArrDelay[abia$Dest=="AUS"]
+abia$hour<-NA
+abia$hour[abia$Origin=="AUS"]=ceiling(abia$DepTime[abia$Origin=="AUS"]/100)
+abia$hour[abia$Dest=="AUS"]=ceiling(abia$ArrTime[abia$Dest=="AUS"]/100)
+```
+
+Let us first look at the frequency plot- how many flights fly per each hour on a monthly basis. 
+
+```{r}
+abia1 <- na.omit(abia[,c("arr_dep","delay","hour", "Month")])
+
+# creating the pivot table
+abia_tab <- xtabs(~hour + Month + arr_dep, abia1)
+abia_tab <- as.data.frame.table(abia_tab)
+
+library(ggplot2)
+
+# plotting the frequency across months controlled for time of the day
+plt <- ggplot(abia_tab, aes(Month, hour, fill = Freq)) + facet_grid(~arr_dep) + geom_tile() + ylab("Hour of the day") + ggtitle("Frequency of Flights in Austin") + scale_fill_gradient( trans="sqrt", low = "white", high="dark blue")
+plt  + scale_y_discrete(limits=rev(levels(abia_tab$hour)))
+```
+
+**The above figure shows the frequency of flights in Austin varying across months controlled for hour of the day.**
+
+
+Now let us look at the number of flights cancelled due to a particular reason on a monthly basis. Based on Wiki the 3 types of cancellations mean the following:
+
+- **Carrier Delay:** Carrier delay is within the control of the air carrier. Examples of occurrences that may determine carrier delay are: aircraft cleaning, aircraft damage, awaiting the arrival of connecting passengers or crew, baggage, bird strike, cargo loading, catering, computer, outage-carrier equipment, crew legality (pilot or attendant rest), damage by hazardous goods, engineering inspection, fueling, handling disabled passengers, late crew, lavatory servicing, maintenance, oversales, potable water servicing, removal of unruly passenger, slow boarding or seating, stowing carry-on baggage, weight and balance delays.
+
+- **NAS Delay:** Delay that is within the control of the National Airspace System (NAS) may include: non-extreme weather conditions, airport operations, heavy traffic volume, air traffic control, etc. Delays that occur after Actual Gate Out are usually attributed to the NAS and are also reported through OPSNET.
+
+- **Weather Delay:** Weather delay is caused by extreme or hazardous weather conditions that are forecasted or manifest themselves on point of departure, enroute, or on point of arrival.
+
+```{r}
+
+# Extracting the useful columns
+abia2 <- na.omit(abia[,c("arr_dep","Cancelled","CancellationCode","Month")])
+
+# Removing all non-cancelled flights
+abia2 <- abia2[abia2$Cancelled==1,]
+
+# Creating pivot table
+abia_tab <- xtabs(~CancellationCode + Month + arr_dep, abia2)
+abia_tab <- as.data.frame.table(abia_tab)
+abia_tab <- abia_tab[abia_tab$CancellationCode!="",]
+
+# Adding Cancellation reasons
+abia_tab$CancellationReason[abia_tab$CancellationCode=="A"] <- "Carrier"
+abia_tab$CancellationReason[abia_tab$CancellationCode=="B"] <- "Weather"
+abia_tab$CancellationReason[abia_tab$CancellationCode=="C"] <- "NAS"
+
+# plotting the number of cancelled flights across months
+plt <- ggplot(abia_tab, aes(Month, CancellationReason, fill = Freq)) + facet_grid(~arr_dep) + geom_tile() + ylab("Cancellation Factor") + ggtitle("Cancelled flights across months") + scale_fill_gradient( trans="sqrt", low = "white", high="dark red") 
+plt
+```
+
+**The above figure shows the number of cancelled flights in Austin across months due to different factors**
+
+##**Conclusion:**
+
+I have created 2 figures - one showing the frequency of flights across months controlled for time of the day, the second one showing the number of cancelled flights in Austin across months due to various reasons. Both theses plots are straight forward and readable. The legends, axis labels and the titles along with the figures themselves should convey the takeaways from these plots. 
+
+
+------------------
+
+
+#**Question 2: Author attribution**
+
+**Objective:** To build two separate models for predicting the author of an article on the basis of that article's textual content. 
+
+The first part of this exercise derives a lot of its content from NaiveBayes.R which was discussed in class. 
+
+Let us first create the readerPlain function which will help us read the files. 
+
+```{r warning= FALSE, message= FALSE}
+library(tm)
+
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+```
+
+Let us first create the training corpus
+
+```{r}
+
+author_dirs_train = Sys.glob('ReutersC50/C50train/*')
+file_list_train = NULL
+labels_train = NULL
+
+for(author in author_dirs_train) {
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list_train = append(file_list_train, files_to_add)
+  author_name = substring(author, first=21)
+  labels_train = append(labels_train, rep(author_name, length(files_to_add)))
+}
+```
+
+In a very similar manner, let us first create the test corpus
+
+```{r}
+author_dirs_test = Sys.glob('ReutersC50/C50test/*')
+
+file_list_test = NULL
+labels_test = NULL
+
+for(author in author_dirs_test) {
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list_test = append(file_list_test, files_to_add)
+  author_name = substring(author, first=20)
+  labels_test = append(labels_test, rep(author_name, length(files_to_add)))
+}
+```
+
+To deal with words in the test set we never saw in the training set, I am combining both training and test datasets which will later be used to create a single document term matrix with all words from training and test.
+
+
+```{r}
+file_lists = append(file_list_train,file_list_test)
+labels = NULL
+labels <- unique(append(labels_train, labels_test))
+
+all_docs = lapply(file_lists, readerPlain) 
+names(all_docs) = file_lists
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = names(all_docs)
+
+# Preprocessing
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+DTM = DocumentTermMatrix(my_corpus)
+DTM
+```
+
+We can see that the sparsity of the document is very high. Let us now remove all elements which have more than a sparse factor of 0.975. 
+
+```{r}
+inspect(DTM[1:10,1:5])
+DTM = removeSparseTerms(DTM, 0.975)
+DTM
+```
+
+I am going to use Naive Bayes technique discussed in class to build the first model.
+
+**Naive Bayes:**
+
+Let us first convert the DTM to a data matrix. 
+
+```{r}
+X = as.matrix(DTM)
+```
+
+We can separate the training set and test set by just taking the first 2500 and the next 2500 entries in the DTM. This should work well simply because our file lists were correctly ordered based on train and test. We can see that here.
+
+```{r}
+file_lists[2490:2510]
+```
+
+So now let us go ahead and split the training and test data. 
+
+```{r}
+X_train <- X[1:2500,]
+labels <- unique(labels)
+```
+
+Now let us calculate the term level weights for each author by applying the Laplace smoothing factor.  
+
+```{r}
+smooth_count = 1/nrow(X_train)
+for(i in 1:50) 
+{ 
+  w_name <- paste("w",labels[i], sep = "_")
+  temp <- colSums(X_train[(50*(i-1)+1):(50*i),] + smooth_count)
+  assign(w_name, temp/sum(temp))
+}
+
+```
+
+Now using the above weight vectors, let us predict the author name of the test data. We do this by calculation the log probabilities of all documents across all authors. The author with the highest value will be the most probable author for that document. 
+
+```{r}
+X_test <- X[2501:5000,]
+
+pred = matrix(, nrow = 2500, ncol = 51) 
+for(i in 1:2500) 
+{ 
+  for(j in 1:50)
+  {
+    w_name <- paste("w",labels[j], sep = "_")
+    pred[i,j] = sum(X_test[i,]*log(get(w_name)))
+  }
+}
+
+pred[1:10,1:5]
+```
+
+Let us now create a list with the predicted authors for each document by finding the highest probable authors for each document. 
+
+```{r, warning=FALSE}
+for (i in 1:2500)
+{
+  pred[i,51] = which.max(pred[i,])
+}
+
+predicted = NULL
+predicted = cbind((rep(1:50, each=50)),pred[,51])
+predicted$actual_author <- rep(1:50, each=50)
+predicted$pred_author <- pred[,51]
+```
+ 
+Let us now compare the predicted and actual authors using a confusion matrix
+
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+library(e1071)
+```
+```{r}
+confusionMatrix(predicted$pred_author,predicted$actual_author)
+```
+
+The accuracy of this Naive Bayes classification model is 60.24%. 
+
+There are authors whose works are similar and hence it is tough to distinguish them - these authors have similar "bag of words" and hence it is safe to assume that they write on similar topics. In fact, we can see a lot of such examples in the confusion matrix. Take author 14 and 19. 23 articles of author JanLopatka (author number 14) have been classified as written by JohnMastrini (author number 19). 11 of John's article have again been classified as written by Jan. This means both should be writing about similar stuff. Lets go ahead and verify that!
+
+```{r}
+head(sort(w_JanLopatka, decreasing=TRUE),30)
+head(sort(w_JohnMastrini, decreasing=TRUE),30)
+```
+
+We can easily see that both authors seem to be writers of articles on Czech Government. Even their last names make sense now! 
+
+The second model I have tried is a random Forest classifier. 
+
+**Random Forest:**
+
+Let us first convert the data matrix to a dataframe.
+
+```{r}
+actual_author = rep(rep(1:50,each=50),2)
+author = as.data.frame(X)
+colnames(author) = make.names(colnames(author))
+author$actual_author=actual_author
+author$actual_author=as.factor(author$actual_author)
+```
+
+Let us now split the data into training and test similarly and then run the random forest model.
+
+```{r}
+author_train=author[1:2500,]
+author_test=author[2501:5000,]
+```
+
+```{r, message=FALSE}
+library(randomForest)
+```
+
+```{r}
+set.seed(23432)
+rf_author=randomForest(actual_author~.,data=author_train)
+predicted_author=predict(rf_author,newdata=author_test)
+confusionMatrix(predicted_author,author_test$actual_author)
+```
+
+Random Forest gives a slightly better accuracy of ~62.4%
+
+##**Conclusion:**
+
+Using the training and test corpus of Reuters datasets, I built 2 classifiers - Naive Bayes and Random Forest. Out of these 2, Random Forest gives slightly better prediction than Naive Bayes. Even though the accuracy is slightly higher for Random Forest, I would still choose Naive Bayes because it is much less complex than Random Forest. It is also less computationally intensive compared to Random Forest. 
+
+------------------
+
+
+#**Question 3: Association rule mining**
+
+**Objective:** To use the data on grocery purchases and find some interesting association rules for the shopping baskets. 
+
+```{r,warning=FALSE, message=FALSE}
+# Loading arules and reshape packages
+library(arules)
+library(reshape)
+```
+
+Let us read the data from the text file. 
+
+```{r}
+groc <- read.csv("groceries.txt", header = FALSE)
+head(groc,8)
+```
+
+We can see that each row has only 4 columns. But we do have rows with more than 4 columns, for example elements in row number 7 and 8 from above are actually from row 6. So we need to find out the actual number of columns first and use that while reading the csv.
+
+```{r}
+#Finding the maximum number of columns
+max(count.fields("groceries.txt", sep = ','))
+groc <- read.csv("groceries.txt", header = FALSE, col.names = paste0("V",seq_len(32)), fill = TRUE)
+dim(groc)
+head(groc,8)
+```
+
+Now let us extract the number of transactions and then add it to the dataframe.
+
+```{r}
+rows <- 1:nrow(groc)
+groc <- cbind(rows,groc)
+head(groc)
+```
+
+As we can see above, each column has different number of levels. So we need to melt this dataframe into individual rows, add NA's and then remove them - this will make the number of levels for each column same, then get back the dataframe by using split function.
+
+```{r}
+# unstacking the dataframe
+groc1 <- melt(groc,id=c("rows"))
+#ordering it by transactions
+groc1 <- groc1[order(groc1$rows),]
+#adding NA's
+groc1[groc1==""] <- NA
+#removing NA's
+groc1 <- na.omit(groc1)
+groc1$rows <- factor(groc1$rows)   #this is not a continuous variable, it represents transaction id or number
+head(groc1)
+```
+
+As can be seen above the words are in the unstacked format (similar to how playlists.csv was stored)
+
+Now let us create a list of baskets (analogous to bag of words)
+
+```{r}
+# First split data into a list of items for each transaction
+groc1 <- split(x=groc1$value, f=groc1$rows)
+
+## Remove duplicates ("de-dupe")
+groc1 <- lapply(groc1, unique)
+head(groc1)
+```
+
+We can now see the levels are the same in all the transactions and hence we can apply the apriori function to this.
+
+```{r}
+## Cast this variable as a special arules "transactions" class.
+groc_trans <- as(groc1, "transactions")
+```
+```{r, message=FALSE, results='hide'}
+# Now run the 'apriori' algorithm
+# Look at rules with support > .01 & confidence >.5 & length (# items) <= 4
+groc_rules <- apriori(groc_trans, parameter=list(support=.01, confidence=.5, maxlen=4))
+```
+```{r}
+# Look at the output
+inspect(groc_rules)
+```
+
+With the cutoffs similar to playlists, we get 15 itemsets as result. But we can see that most of the results above contain associations between vegetables and milk products. 
+
+This makes sense because we have used a support of 0.01 and we totally have 9835 rows. But we can see even the itemset (root vegetables, yogurt, whole milk) which one would imagine to be one of the most frequently purchased grocery items has a support of only ~0.015, which is about 145 occurences of the itemset in the entire dataset. So keeping this in mind, we should reduce the support so that we identify more frequent itemsets.
+
+Now let us play around with the cutoff values and zero-in on one set that makes sense 
+
+```{r, message=FALSE, results='hide'}
+# First changing the support cutoff and keeping confidence cutoff constant
+groc_rules <- apriori(groc_trans, parameter=list(support=.005, confidence=.5, maxlen=4))
+```
+```{r, message=FALSE, results='hide'}
+inspect(groc_rules)
+```
+
+The above gave 120 results so not including the output. 
+
+```{r, message=FALSE, results='hide'}
+groc_rules <- apriori(groc_trans, parameter=list(support=.002, confidence=.8, maxlen=4))
+```
+```{r}
+inspect(groc_rules)
+```
+
+Again, nothing new. All that we would expect. I am decreasing the support even further and increasing the maxlen to 5.
+
+```{r, message=FALSE, results='hide'}
+groc_rules <- apriori(groc_trans, parameter=list(support=.0015, confidence=.9, maxlen=5))
+```
+```{r}
+inspect(groc_rules)
+```
+
+Now this is interesting. We have all what we expect, but we also have something that has not showed up until now which at the same time is very intuitive. I am talking about the item set (Liquor, red/blush wine/bottled beer).
+
+This has a support of ~0.002 which is ~20 occurences of the itemsets in total. So we would not want to decrease the support any further. 
+
+##**Conclusion:**
+
+The best set so far is the one with support=0.0015 and confidence=0.9 and maxlen=5. I have chosen this as the best set because all of these sets make very good intuitive sense to me. Since my support is less and my confidence is high, it may be read as *most customers who buy itemset X will also buy itemset Y 90% of the times, even though they might not actually buy these sets as frequently as few others*. 
+
+- Customers who are in to purchase alcohol will tend to buy different sets of alcohols. So liquor and red/blush wine being associated with bottled beer makes total sense amd its confidence tells the same story!
+- All the other items have very good associations as well. Whole milk goes with cream cheese/butter/yogurt/sugar and root/other vegetables/tropical fruits/domestic eggs. These all look like a regular grocery shopping. 
+
+So placing these above itemsets next to each other in the grocery store will make shopping very convenient for the customers. 
+
+Aside: I have designed my cutoffs in such a way that there are only few number of interesting associations found. We can play around with these numbers to find more number of association rules. For example, we can make the maxlen to be 2 and then increase the support cutoff to say 0.05
+
+```{r, message=FALSE, results='hide'}
+groc_rules <- apriori(groc_trans, parameter=list(support=.05, confidence=.2, maxlen=2))
+```
+```{r}
+inspect(groc_rules)
+```
+
+So what the above results say is that 25% of the customers are definitely going to buy milk. So the store needs to make sure "Whole Milk"" is very accessible. And the combinations below are also very common pairs occuring more than 5% of times. So keep them next to each other at the same time make them very accessible too since a lot of people buy them! 
+
+
+------------------
+
+
+
+
+
